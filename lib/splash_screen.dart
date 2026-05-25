@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'home_screen.dart';
-import 'main.dart';
+import 'screens/login_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -20,7 +20,6 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
 
-    // Animation setup
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
@@ -36,22 +35,21 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    // Navigate after 3 seconds
     Future.delayed(const Duration(seconds: 3), () {
       _checkLoginStatus();
     });
   }
 
-  Future<void> _checkLoginStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+  void _checkLoginStatus() {
+    // Firebase automatically knows if user is logged in
+    final user = FirebaseAuth.instance.currentUser;
 
     if (mounted) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (context) =>
-          isLoggedIn ? const HomeScreen() : const LoginScreen(),
+          user != null ? const HomeScreen() : const LoginScreen(),
         ),
       );
     }
@@ -75,11 +73,7 @@ class _SplashScreenState extends State<SplashScreen>
             child: const Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.task_alt,
-                  size: 100,
-                  color: Colors.white,
-                ),
+                Icon(Icons.task_alt, size: 100, color: Colors.white),
                 SizedBox(height: 20),
                 Text(
                   'Task Manager',
@@ -93,10 +87,7 @@ class _SplashScreenState extends State<SplashScreen>
                 SizedBox(height: 8),
                 Text(
                   'Stay organized, stay productive',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.white70,
-                  ),
+                  style: TextStyle(fontSize: 14, color: Colors.white70),
                 ),
               ],
             ),

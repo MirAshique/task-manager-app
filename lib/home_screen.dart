@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'providers/task_provider.dart';
+import 'screens/users_list_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -10,32 +14,14 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final List<Map<String, dynamic>> _tasks = [];
   final TextEditingController _taskController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _loadTasks(); // Load tasks when app starts
-  }
-
-  // Load tasks from SharedPreferences
-  Future<void> _loadTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? tasksJson = prefs.getString('tasks');
-    if (tasksJson != null) {
-      final List decoded = jsonDecode(tasksJson);
-      setState(() {
-        _tasks.clear();
-        _tasks.addAll(decoded.map((e) => Map<String, dynamic>.from(e)));
-      });
-    }
-  }
-
-  // Save tasks to SharedPreferences
-  Future<void> _saveTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('tasks', jsonEncode(_tasks));
+    // Load tasks via Provider
+    Future.microtask(() =>
+        Provider.of<TaskProvider>(context, listen: false).loadTasks());
   }
 
   void _addTask() {
@@ -43,10 +29,13 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Add Task'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         content: TextField(
           controller: _taskController,
-          decoration: const InputDecoration(
+          autofocus: true,
+          decoration: InputDecoration(
             hintText: 'Enter task name',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
         actions: [
@@ -60,17 +49,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () {
               if (_taskController.text.isNotEmpty) {
-                setState(() {
-                  _tasks.add({
-                    'title': _taskController.text,
-                    'isDone': false,
-                  });
-                });
-                _saveTasks(); // Save after adding
+                Provider.of<TaskProvider>(context, listen: false)
+                    .addTask(_taskController.text);
                 _taskController.clear();
                 Navigator.pop(context);
               }
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Add'),
           ),
         ],
@@ -78,18 +66,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _deleteTask(int index) {
-    setState(() {
-      _tasks.removeAt(index);
-    });
-    _saveTasks(); // Save after deleting
-  }
-
-  void _toggleTask(int index) {
-    setState(() {
-      _tasks[index]['isDone'] = !_tasks[index]['isDone'];
-    });
-    _saveTasks(); // Save after toggling
+  Future<void> _logout() async {
+    await FirebaseAuth.instance.signOut();
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+      );
+    }
   }
 
   @override
@@ -102,66 +86,144 @@ class _HomeScreenState extends State<HomeScreen> {
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _addTask,
+            icon: const Icon(Icons.person),
+            tooltip: 'My Profile',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (context) => const ProfileScreen())),
+          ),
+          IconButton(
+            icon: const Icon(Icons.people),
+            tooltip: 'View Users',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (context) => const UsersListScreen())),
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+            onPressed: _logout,
           ),
         ],
       ),
-      body: _tasks.isEmpty
-          ? const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.task_alt, size: 80, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
-              'No tasks yet!\nTap + to add a task',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-          ],
-        ),
-      )
-          : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _tasks.length,
-        itemBuilder: (context, index) {
-          final task = _tasks[index];
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: ListTile(
-              leading: Checkbox(
-                value: task['isDone'],
-                onChanged: (val) => _toggleTask(index),
-                activeColor: Colors.blue,
-              ),
-              title: Text(
-                task['title'],
-                style: TextStyle(
-                  fontSize: 16,
-                  decoration: task['isDone']
-                      ? TextDecoration.lineThrough
-                      : TextDecoration.none,
-                  color: task['isDone'] ? Colors.grey : Colors.black,
+      body: Consumer<TaskProvider>(
+        builder: (context, taskProvider, child) {
+          final tasks = taskProvider.tasks;
+
+          return Column(
+            children: [
+              // 📊 Stats Bar
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                color: Colors.blue.shade50,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _statChip('Total', taskProvider.totalTasks, Colors.blue),
+                    _statChip('Done', taskProvider.completedTasks, Colors.green),
+                    _statChip('Pending', taskProvider.pendingTasks, Colors.orange),
+                  ],
                 ),
               ),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete, color: Colors.red),
-                onPressed: () => _deleteTask(index),
+
+              // 📋 Task List
+              Expanded(
+                child: tasks.isEmpty
+                    ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.task_alt, size: 80, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text(
+                        'No tasks yet!\nTap + to add a task',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+                    : AnimatedList(
+                  key: GlobalKey<AnimatedListState>(),
+                  padding: const EdgeInsets.all(16),
+                  initialItemCount: tasks.length,
+                  itemBuilder: (context, index, animation) {
+                    return _buildAnimatedTask(
+                        context, index, animation, taskProvider);
+                  },
+                ),
               ),
-            ),
+            ],
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: _addTask,
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
-        child: const Icon(Icons.add),
+        icon: const Icon(Icons.add),
+        label: const Text('Add Task'),
       ),
+    );
+  }
+
+  // Animated task card
+  Widget _buildAnimatedTask(BuildContext context, int index,
+      Animation<double> animation, TaskProvider taskProvider) {
+    final task = taskProvider.tasks[index];
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(1, 0), // slides in from right
+        end: Offset.zero,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+      child: FadeTransition(
+        opacity: animation,
+        child: Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          elevation: 2,
+          child: ListTile(
+            leading: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              child: Checkbox(
+                value: task['isDone'],
+                onChanged: (val) => taskProvider.toggleTask(index),
+                activeColor: Colors.blue,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+            title: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 300),
+              style: TextStyle(
+                fontSize: 16,
+                decoration: task['isDone']
+                    ? TextDecoration.lineThrough
+                    : TextDecoration.none,
+                color: task['isDone'] ? Colors.grey : Colors.black,
+              ),
+              child: Text(task['title']),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              onPressed: () => taskProvider.deleteTask(index),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Stats chip widget
+  Widget _statChip(String label, int count, Color color) {
+    return Column(
+      children: [
+        Text(
+          '$count',
+          style: TextStyle(
+              fontSize: 22, fontWeight: FontWeight.bold, color: color),
+        ),
+        Text(label, style: TextStyle(fontSize: 12, color: color)),
+      ],
     );
   }
 }
